@@ -1,0 +1,190 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedOwnerEmail() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'youssefgamer9492@gmail.com';
+    }
+
+    function isAdmin() {
+      return isVerifiedOwnerEmail()
+        || (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // Schema Validators (Strict Keys + Types + Boundaries)
+    function isValidAdSiteConfig(data) {
+      return data.keys().hasAll([
+          'adsEnabled',
+          'adsenseClientId',
+          'slotBannerId',
+          'slotNewsId',
+          'slotSidebarId',
+          'customScriptUrl',
+          'adsTxtLine',
+          'updatedBy',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'adsEnabled',
+          'adsenseClientId',
+          'slotBannerId',
+          'slotNewsId',
+          'slotSidebarId',
+          'customScriptUrl',
+          'adsTxtLine',
+          'updatedBy',
+          'updatedAt'
+        ])
+        && data.adsEnabled is bool
+        && data.adsenseClientId is string
+        && data.adsenseClientId.size() <= 32
+        && data.adsenseClientId.matches('^(|ca-pub-[0-9]{10,20})$')
+        && data.slotBannerId is string
+        && data.slotBannerId.size() <= 20
+        && data.slotBannerId.matches('^(|[0-9]{6,15})$')
+        && data.slotNewsId is string
+        && data.slotNewsId.size() <= 20
+        && data.slotNewsId.matches('^(|[0-9]{6,15})$')
+        && data.slotSidebarId is string
+        && data.slotSidebarId.size() <= 20
+        && data.slotSidebarId.matches('^(|[0-9]{6,15})$')
+        && data.customScriptUrl is string
+        && data.customScriptUrl.size() <= 500
+        && data.customScriptUrl.matches('^(|https://.+)$')
+        && data.adsTxtLine is string
+        && data.adsTxtLine.size() <= 200
+        && data.updatedBy is string
+        && data.updatedBy.size() >= 1
+        && data.updatedBy.size() <= 128
+        && data.updatedBy == request.auth.uid
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdCampaign(data) {
+      return data.keys().hasAll([
+          'title',
+          'subtitle',
+          'ctaText',
+          'targetUrl',
+          'imageUrl',
+          'placement',
+          'active',
+          'ownerUid',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'title',
+          'subtitle',
+          'ctaText',
+          'targetUrl',
+          'imageUrl',
+          'placement',
+          'active',
+          'ownerUid',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 140
+        && data.subtitle is string
+        && data.subtitle.size() <= 260
+        && data.ctaText is string
+        && data.ctaText.size() >= 1
+        && data.ctaText.size() <= 40
+        && data.targetUrl is string
+        && data.targetUrl.size() >= 8
+        && data.targetUrl.size() <= 500
+        && data.targetUrl.matches('^https?://.+')
+        && data.imageUrl is string
+        && data.imageUrl.size() <= 500
+        && (data.imageUrl == '' || data.imageUrl.matches('^https?://.+') || data.imageUrl.matches('^/src/assets/images/.+'))
+        && data.placement in ['all', 'main_banner', 'news_feed', 'watch_banner', 'sidebar']
+        && data.active is bool
+        && data.ownerUid is string
+        && data.ownerUid.size() >= 1
+        && data.ownerUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Connection check document
+    match /test/{docId} {
+      allow get: if docId == 'connection';
+    }
+
+    // Admin registry (read self only; write denied from client)
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && request.auth.uid == adminUid;
+      allow list, write: if false;
+    }
+
+    // Global Ad Site Config (publicly readable non-PII ad slots; owner admin write only)
+    match /siteConfig/{docId} {
+      allow get: if isValidId(docId) && docId == 'ads';
+      allow list: if false;
+      allow create, update: if isSignedIn()
+        && isAdmin()
+        && isValidId(docId)
+        && docId == 'ads'
+        && isValidAdSiteConfig(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // Published Ad Campaigns (visitors can only list active campaigns; admin can list/manage all)
+    match /campaigns/{campaignId} {
+      allow get: if isValidId(campaignId) && (existing().active == true || isAdmin());
+      allow list: if resource.data.active == true || isVerifiedOwnerEmail();
+      allow create: if isSignedIn()
+        && isAdmin()
+        && isValidId(campaignId)
+        && isValidAdCampaign(incoming())
+        && incoming().ownerUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isAdmin()
+        && isValidId(campaignId)
+        && isValidAdCampaign(incoming())
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'title',
+          'subtitle',
+          'ctaText',
+          'targetUrl',
+          'imageUrl',
+          'placement',
+          'active',
+          'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isAdmin() && isValidId(campaignId);
+    }
+  }
+}

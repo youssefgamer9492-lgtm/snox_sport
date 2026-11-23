@@ -1,0 +1,8 @@
+{
+  "name": "SNOX SPORT | BY WANIS",
+  "description": "شاهد أحدث المباريات مجانًا على SNOX Sports! ⚽ تابع نتائج المباريات المباشرة، ومواعيد المواجهات القادمة، وملخصات وأحداث المباريات، مع متابعة أهم الدوريات والبطولات العالمية والعربية في مكان واحد. مع خاصية التنبيهات الفورية لكل هدف وتطور جديد. BY WANIS",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
